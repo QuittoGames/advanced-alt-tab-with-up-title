@@ -75,6 +75,7 @@ export const WindowIcon = GObject.registerClass({
             style_class: 'card-header',
             x_expand: true,
         });
+        this._header.y_fill = false;
 
         this.add_child(this._header);
         this.add_child(this._icon);
@@ -92,6 +93,7 @@ export const WindowIcon = GObject.registerClass({
         const closeButton = new St.Icon({
             style_class: 'window-close-aatws',
             icon_name: 'window-close-symbolic',
+            icon_size: 14,
             y_align: Clutter.ActorAlign.CENTER,
             reactive: true,
         });
