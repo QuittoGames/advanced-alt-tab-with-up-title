@@ -166,7 +166,7 @@
 
 /* space between switcher items */
 .switcher-list-item-container {
-  spacing: 6px;
+  spacing: 10px;
 }
 
 .switcher-list, .switcher-list-dark, .switcher-list-light, .switcher-list-all, .switcher-list-workspace, .switcher-list-monitor {
