@@ -123,8 +123,8 @@
 .window-close-aatws {
   color: white;
   background-color: dimgrey;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   padding: 2px;
   box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
   border: 0px;
@@ -166,7 +166,7 @@
 
 /* space between switcher items */
 .switcher-list-item-container {
-  spacing: 1px;
+  spacing: 6px;
 }
 
 .switcher-list, .switcher-list-dark, .switcher-list-light, .switcher-list-all, .switcher-list-workspace, .switcher-list-monitor {
@@ -218,8 +218,8 @@
 
 /* Windows 11 style card header */
 .card-header {
-  spacing: 6px;
-  padding: 6px 10px;
+  spacing: 8px;
+  padding: 8px 12px;
 }
 
 .card-header-title {
@@ -228,4 +228,5 @@
 
 .thumbnail-box {
   border-radius: 12px;
+  padding: 0 4px 4px 4px;
 }
