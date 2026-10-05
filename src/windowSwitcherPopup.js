@@ -1379,6 +1379,44 @@ export const WindowSwitcherPopup = {
         return mod(this._selectedIndex - step, this._items.length);
     },
 
+    /**
+     * Returns the index of the item one row above (rowDelta = -1) or below
+     * (rowDelta = +1) the current selection, keeping the column when the target
+     * row is long enough. Returns -1 when the list is laid out on a single row,
+     * i.e. when there is no other row to move to and the caller should fall back
+     * to its regular up/down action.
+     *
+     * @param {number} rowDelta - direction of the row to move to
+     * @returns {number} index of the item to select, or -1 when not applicable
+     */
+    _rowStep(rowDelta) {
+        const rows = this._switcherList?.getRows();
+        if (!rows || rows.length < 2)
+            return -1;
+
+        let rowIndex = 0;
+        let columnIndex = 0;
+        for (let r = 0; r < rows.length; r++) {
+            const column = rows[r].indexOf(this._selectedIndex);
+            if (column !== -1) {
+                rowIndex = r;
+                columnIndex = column;
+                break;
+            }
+        }
+
+        let targetRow = rowIndex + rowDelta;
+        if (targetRow < 0 || targetRow >= rows.length) {
+            if (!opt.WRAPAROUND)
+                return this._selectedIndex;
+            targetRow = (targetRow + rows.length) % rows.length;
+        }
+
+        const row = rows[targetRow];
+
+        return row[Math.min(columnIndex, row.length - 1)];
+    },
+
     _selectNextApp(selectedIndex) {
         let lastIndex, step;
         if (_shiftPressed()) {

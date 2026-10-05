@@ -384,6 +384,9 @@ export class InputHandler {
     }
 
     _navigateUp() {
+        if (this._selectRow(-1))
+            return;
+
         if (this._ctrlPressed() && !this._shiftPressed())
             this._wsp.moveWinToAdjacentWs(Clutter.ScrollDirection.UP);
         else if (this._ctrlPressed() && this._shiftPressed())
@@ -399,6 +402,9 @@ export class InputHandler {
     }
 
     _navigateDown() {
+        if (this._selectRow(+1))
+            return;
+
         if (this._ctrlPressed() && !this._shiftPressed())
             this._actions.moveWinToAdjacentWs(Clutter.ScrollDirection.DOWN);
         else if (this._ctrlPressed() && this._shiftPressed())
@@ -409,6 +415,27 @@ export class InputHandler {
             this._wsp._toggleSingleAppMode();
         else
             this._wsp._switchMonitor(Meta.DisplayDirection.DOWN);
+    }
+
+    /**
+     * Moves the selection one row up (-1) or down (+1) when the switcher is
+     * wrapped into several rows. On a single row there is nothing to move to,
+     * so the configured up/down action of the switcher keeps working unchanged.
+     *
+     * @param {number} rowDelta - direction of the row to move to
+     * @returns {boolean} true when the selection was moved
+     */
+    _selectRow(rowDelta) {
+        if (this._ctrlPressed() || this._shiftPressed())
+            return false;
+
+        const index = this._wsp._rowStep(rowDelta);
+        if (index < 0)
+            return false;
+
+        this._wsp._select(index);
+
+        return true;
     }
 
     _navigateLeft() {

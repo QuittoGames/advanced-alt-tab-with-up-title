@@ -21,6 +21,12 @@ import { AppIcon, WindowIcon, SysActionIcon, ShowAppsIcon } from './switcherItem
 // gettext
 let _;
 
+// Gaps of the reflowing item layout. The columns keep the 1px gap that the
+// stylesheet has always applied to .switcher-list-item-container, the rows get
+// a larger gap so that the line breaks stay readable.
+const FLOW_COLUMN_SPACING = 1;
+const FLOW_ROW_SPACING = 8;
+
 
 /* Item structure:
    Window: (WindowIcon)icon.window
@@ -55,6 +61,33 @@ export const SwitcherList = GObject.registerClass({
 }, class SwitcherList extends SwitcherPopup.SwitcherList {
     _init(items, opt, wsp) {
         super._init(false); // squareItems = false
+
+        // AATWS: the items are reflowed onto as many rows as needed to fit
+        // the available width (Windows 11 style) instead of staying on a single
+        // horizontal line. The flow container is a *child* of this._list rather
+        // than its layout manager: StBoxLayout casts its layout manager to
+        // ClutterBoxLayout from its style_changed handler, so replacing it would
+        // spam the shell journal with invalid cast warnings.
+        this._flowContainer = new St.Widget({
+            x_expand: true,
+            y_expand: true,
+            layout_manager: new Clutter.FlowLayout({
+                orientation: Clutter.Orientation.HORIZONTAL,
+                column_spacing: FLOW_COLUMN_SPACING,
+                row_spacing: FLOW_ROW_SPACING,
+                // greedy wrap: a row is broken as soon as the next item no
+                // longer fits, so the columns per row depend on the width
+                snap_to_grid: false,
+            }),
+        });
+        this._list.add_child(this._flowContainer);
+
+        // Every item stays visible after the reflow, so there is nothing left
+        // to scroll horizontally - keep the base class arrows hidden.
+        this._scrollableLeft = false;
+        this._scrollableRight = false;
+        this._maxContentWidth = 0;
+
         this._opt = opt;
         this._switcherParams = this._getSwitcherParams(opt, wsp);
         this._wsp = wsp;
@@ -125,6 +158,43 @@ export const SwitcherList = GObject.registerClass({
         this.connect('destroy', this._onDestroy.bind(this));
     }
 
+    addItem(item, label) {
+        const itemBox = super.addItem(item, label);
+
+        // The base class parents the item to this._list (its single line box
+        // container); move it into the wrapping container instead so that it
+        // takes part in the row reflow. All bookkeeping done by the base class
+        // (signals, _items, label_actor) is left untouched.
+        this._list.remove_child(itemBox);
+        this._flowContainer.add_child(itemBox);
+
+        return itemBox;
+    }
+
+    /**
+     * Item indices grouped by visual row, derived from the allocations the flow
+     * layout actually produced. Deriving the rows from the real geometry keeps
+     * a second copy of the wrapping rule from drifting away from the layout.
+     *
+     * @returns {number[][]} indices of the items of each row
+     */
+    getRows() {
+        const rows = [];
+        let rowY = null;
+
+        for (let i = 0; i < this._items.length; i++) {
+            // items of the same row are all allocated at the same y position
+            const y = Math.round(this._items[i].allocation.y1);
+            if (rowY === null || Math.abs(y - rowY) > 1)
+                rows.push([]);
+
+            rowY = y;
+            rows[rows.length - 1].push(i);
+        }
+
+        return rows;
+    }
+
     _addStatusLabel() {
         if (!this._opt.STATUS)
             return;
@@ -190,44 +260,68 @@ export const SwitcherList = GObject.registerClass({
         });
     }
 
-    vfunc_get_preferred_height() {
-        let maxChildMin = 0;
-        let maxChildNat = 0;
+    /**
+     * Width of the area the items are reflowed into, i.e. the width requested
+     * by the caller minus this widget's own border and padding.
+     *
+     * @param {number} forWidth - width requested by the caller
+     * @returns {number} available content width, or -1 when it is unknown
+     */
+    _getContentWidth(forWidth) {
+        if (!(forWidth > 0))
+            return -1;
 
-        for (let i = 0; i < this._items.length; i++) {
-            let [childMin, childNat] = this._items[i].get_preferred_height(-1);
-            maxChildMin = Math.max(childMin, maxChildMin);
-            maxChildNat = Math.max(childNat, maxChildNat);
-        }
+        const themeNode = this.get_theme_node();
+        const box = new Clutter.ActorBox();
+        box.x1 = 0;
+        box.y1 = 0;
+        box.x2 = forWidth;
+        box.y2 = 0;
+        const contentBox = themeNode.get_content_box(box);
 
-        if (this._squareItems) {
-            let [childMin] = this._maxChildWidth(-1);
-            maxChildMin = Math.max(childMin, maxChildMin);
-            maxChildNat = maxChildMin;
-        }
+        return contentBox.x2 - contentBox.x1;
+    }
 
-        const orientation = this._list.orientation === undefined ? 'vertical' : 'orientation';
-        let multiplier = this._list[orientation] ? this._items.length : 1;
-        let spacing = this._list.get_theme_node().get_length('spacing') * (multiplier - 1);
-        maxChildMin = maxChildMin * multiplier + spacing;
-        maxChildNat = maxChildNat * multiplier + spacing;
+    vfunc_get_preferred_height(forWidth) {
+        // The popup passes the monitor width, so the items are reflowed for the
+        // space that is really available. The height therefore depends on how
+        // many rows the layout produces for that width: one row stays small, the
+        // rows that follow make the popup grow vertically.
+        const contentWidth = this._getContentWidth(forWidth);
+        if (contentWidth > 0)
+            this._maxContentWidth = contentWidth;
 
-        let themeNode = this.get_theme_node();
-        let [minHeight, natHeight] = themeNode.adjust_preferred_height(maxChildMin, maxChildNat);
+        // FlowLayout returns the height of the tallest row as its minimum and
+        // the height of all rows as its natural height.
+        const [rowsMin, rowsNat] = this._flowContainer.get_preferred_height(contentWidth);
 
-        spacing = this.get_theme_node().get_padding(St.Side.BOTTOM);
-        let labelMin, labelNat;
+        const themeNode = this.get_theme_node();
+        let [minHeight, natHeight] = themeNode.adjust_preferred_height(rowsMin, rowsNat);
+
+        const spacing = themeNode.get_padding(St.Side.BOTTOM);
+        let labelMin = 0;
+        let labelNat = 0;
         if (this._statusLabel)
             [labelMin, labelNat] = this._statusLabel.get_preferred_height(-1);
-        else
-            [labelMin, labelNat] = [0, 0];
 
-        multiplier = 0;
-        multiplier += this._opt.STATUS ? 1 : 0;
-        minHeight += multiplier * labelMin + spacing;
-        natHeight += multiplier * labelNat + spacing;
+        minHeight += labelMin + spacing;
+        natHeight += labelNat + spacing;
 
         return [minHeight, natHeight];
+    }
+
+    vfunc_get_preferred_width(forHeight) {
+        const [minLineWidth, oneLineWidth] = this._list.get_preferred_width(forHeight);
+
+        // After the reflow the popup only needs the width of the widest row. If
+        // the rows have not been measured for an available width yet, fall back
+        // to the single line width, which is what the base class reports.
+        let contentWidth = oneLineWidth;
+        if (this._maxContentWidth > 0)
+            contentWidth = Math.min(contentWidth, this._maxContentWidth);
+        contentWidth = Math.max(contentWidth, minLineWidth);
+
+        return this.get_theme_node().adjust_preferred_width(minLineWidth, contentWidth);
     }
 
     vfunc_allocate(box) {
@@ -276,17 +370,12 @@ export const SwitcherList = GObject.registerClass({
     }
 
     highlight(index) {
-        const prevIcon = this.icons[this._highlighted];
-        if (prevIcon?._closeButton)
-            prevIcon._closeButton.opacity = 0;
-
         if (this._items[this._highlighted]) {
             this._items[this._highlighted].remove_style_pseudo_class('selected');
             if (this._opt.colorStyle.STYLE)
                 this._items[this._highlighted].remove_style_class_name(this._opt.colorStyle.SELECTED);
         }
 
-        const icon = this.icons[index];
         if (this._items[index]) {
             this._items[index].add_style_pseudo_class('selected');
             if (this._opt.colorStyle.STYLE) {
@@ -297,30 +386,17 @@ export const SwitcherList = GObject.registerClass({
 
         this._highlighted = index;
 
-        if (icon?.window) {
-            if (!icon._closeButton) {
-                icon._createCloseButton(icon.window);
-                icon._closeButton.connect('enter-event', () => {
-                    icon._closeButton.add_style_class_name('window-close-hover');
-                });
-                icon._closeButton.connect('leave-event', () => {
-                    icon._closeButton.remove_style_class_name('window-close-hover');
-                });
-            }
-            icon._closeButton.opacity = 255;
-        }
+        // No horizontal scrolling: the items are wrapped into the popup width,
+        // so the highlighted item is always visible already.
+    }
 
-        let adjustment = this._scrollView.get_hadjustment
-            ? this._scrollView.get_hadjustment()
-            : this._scrollView.get_hscroll_bar().adjustment;
-        let [value] = adjustment.get_values();
-        let [absItemX] = this._items[index].get_transformed_position();
-        let [, posX] = this.transform_stage_point(absItemX, 0);
-        let [containerWidth] = this.get_transformed_size();
-        if (posX + this._items[index].get_width() > containerWidth)
-            this._scrollToRight(index);
-        else if (this._items[index].allocation.x1 - value < 0)
-            this._scrollToLeft(index);
+    // The base class scrolls its single line container to the selected item.
+    // With wrapping there is no horizontal overflow left, so these are no-ops -
+    // they only keep _initialSelection() and the base class arrow flags working.
+    _scrollToLeft() {
+    }
+
+    _scrollToRight() {
     }
 
     _removeWindow(window) {
