@@ -71,13 +71,6 @@ export const WindowIcon = GObject.registerClass({
         this._icon = new St.Widget({ layout_manager: new Clutter.BinLayout() });
         this._id = metaWin.get_id();
 
-        this._header = new St.BoxLayout({
-            style_class: 'card-header',
-            x_expand: true,
-        });
-        this._header.y_fill = false;
-
-        this.add_child(this._header);
         this.add_child(this._icon);
         this._icon.destroy_all_children();
 
@@ -87,14 +80,19 @@ export const WindowIcon = GObject.registerClass({
             this._hotkeyIndicator = _createHotKeyNumIcon(iconIndex, opt.colorStyle.INDICATOR_OVERLAY);
             this._icon.add_child(this._hotkeyIndicator);
         }
+
+        if (this.titleLabel && this._switcherParams.showWinTitles)
+            this.add_child(this.titleLabel);
     }
 
     _createCloseButton(metaWin) {
         const closeButton = new St.Icon({
             style_class: 'window-close-aatws',
             icon_name: 'window-close-symbolic',
-            icon_size: 14,
-            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.START,
+            x_expand: true,
+            y_expand: true,
             reactive: true,
         });
         closeButton.connect('button-press-event', () => {
@@ -107,7 +105,7 @@ export const WindowIcon = GObject.registerClass({
 
         this._closeButton = closeButton;
         this._closeButton.opacity = 0;
-        this._header.add_child(this._closeButton);
+        this._icon.add_child(this._closeButton);
     }
 
     _createWindowIcon(window) {
@@ -118,9 +116,8 @@ export const WindowIcon = GObject.registerClass({
 
         this.titleLabel = new St.Label({
             text: title,
-            style_class: this._opt.colorStyle.TITLE_LABEL + ' card-header-title',
-            x_align: Clutter.ActorAlign.START,
-            x_expand: true,
+            style_class: this._opt.colorStyle.TITLE_LABEL,
+            x_align: Clutter.ActorAlign.CENTER,
         });
 
         let tracker = Shell.WindowTracker.get_default();
@@ -128,37 +125,63 @@ export const WindowIcon = GObject.registerClass({
 
         let mutterWindow = this.window.get_compositor_private();
         let scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        let switched = false;
+        let size, cloneSize;
 
-        const size = this._switcherParams.winPrevSize;
+        size = this._switcherParams.winPrevSize;
+        cloneSize = size;
 
-        let clone = _createWindowClone(mutterWindow, size * scaleFactor);
-
-        if (this.app && this._opt.APP_ICON_SIZE) {
-            const headerIconSize = Math.min(this._opt.APP_ICON_SIZE, 40);
-            this._appIcon = this._createAppIcon(this.app, headerIconSize);
-            this._appIcon.reactive = false;
-            this._appIcon.x_expand = false;
-            this._appIcon.y_expand = false;
-            this._header.add_child(this._appIcon);
+        if (!this._switcherParams.singleAppMode && this._opt.APP_ICON_SIZE > size) {
+            size = this._opt.APP_ICON_SIZE;
+            switched = true;
+            cloneSize = Math.floor((mutterWindow.width / mutterWindow.height) * this._switcherParams.winPrevSize);
         }
 
-        if (this.titleLabel && this._switcherParams.showWinTitles)
-            this._header.add_child(this.titleLabel);
+        let clone = _createWindowClone(mutterWindow, cloneSize * scaleFactor);
+        let icon;
 
-        clone.x_expand = false;
-        clone.y_expand = false;
-        this._icon.add_child(clone);
+        if (this.app && this._opt.APP_ICON_SIZE) {
+            icon = this._createAppIcon(this.app,
+                this._opt.APP_ICON_SIZE);
+            this._appIcon = icon;
+            this._appIcon.reactive = false;
+        }
+
+        let base, front;
+        if (switched) {
+            base  = icon;
+            front = clone;
+        } else {
+            base  = clone;
+            front = icon;
+        }
 
         if (this.window.minimized && this._opt.MARK_MINIMIZED)
-            clone.opacity = 80;
+            front.opacity = 80;
+
+        this._icon.add_child(base);
+        if (front) {
+            this._alignFront(front);
+            this._icon.add_child(front);
+        }
+
+        // will be used to connect on icon signals (switcherList.icons[n]._front)
+        this._front = front;
 
         if (this.window.is_above() || this.window.is_on_all_workspaces())
             this._icon.add_child(this._getIndicatorBox());
+
 
         if (this._opt.WS_INDEXES) {
             this._wsIndicator = this._createWsIcon(window.get_workspace().index() + 1);
             this._icon.add_child(this._wsIndicator);
         }
+
+        this._icon.set_size(size * scaleFactor, size * scaleFactor);
+    }
+
+    _alignFront(icon) {
+        icon.x_align = icon.y_align = Clutter.ActorAlign.END;
     }
 
     _createAppIcon(app, size) {

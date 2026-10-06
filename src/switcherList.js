@@ -21,10 +21,11 @@ import { AppIcon, WindowIcon, SysActionIcon, ShowAppsIcon } from './switcherItem
 // gettext
 let _;
 
-// Gaps of the reflowing item layout. The columns keep the 1px gap that the
-// stylesheet has always applied to .switcher-list-item-container, the rows get
-// a larger gap so that the line breaks stay readable.
-const FLOW_COLUMN_SPACING = 1;
+// Gaps between the reflowing items. The column gap comes from the stylesheet
+// (`spacing` on .switcher-list-item-container, inherited from the active theme),
+// so the horizontal look stays identical to the old single line layout; the row
+// gap never gets thinner than FLOW_ROW_SPACING so wrapped rows stay readable.
+const FALLBACK_COLUMN_SPACING = 1;
 const FLOW_ROW_SPACING = 8;
 
 
@@ -73,7 +74,7 @@ export const SwitcherList = GObject.registerClass({
             y_expand: true,
             layout_manager: new Clutter.FlowLayout({
                 orientation: Clutter.Orientation.HORIZONTAL,
-                column_spacing: FLOW_COLUMN_SPACING,
+                column_spacing: FALLBACK_COLUMN_SPACING,
                 row_spacing: FLOW_ROW_SPACING,
                 // greedy wrap: a row is broken as soon as the next item no
                 // longer fits, so the columns per row depend on the width
@@ -81,6 +82,14 @@ export const SwitcherList = GObject.registerClass({
             }),
         });
         this._list.add_child(this._flowContainer);
+
+        // The horizontal gap used to be applied by StBoxLayout itself: it reads
+        // `spacing` from .switcher-list-item-container and pushes it into its
+        // ClutterBoxLayout. Now that the items are children of the flow
+        // container that CSS value no longer reaches them, so read it back and
+        // hand it to the FlowLayout - this keeps whatever the active theme
+        // wins in the cascade, exactly like before the reflow.
+        this._list.connect('style-changed', () => this._updateFlowSpacing());
 
         // Every item stays visible after the reflow, so there is nothing left
         // to scroll horizontally - keep the base class arrows hidden.
@@ -261,6 +270,29 @@ export const SwitcherList = GObject.registerClass({
     }
 
     /**
+     * Gaps of the reflowing rows.
+     *
+     * StBoxLayout reads the CSS `spacing` of .switcher-list-item-container and
+     * pushes it into its own ClutterBoxLayout, so before the reflow the
+     * horizontal gap always came from whatever stylesheet won the cascade.
+     * The items are now children of the flow container and no longer see that
+     * property, so read it back from the theme node and apply it here - the
+     * horizontal rhythm stays exactly what the stylesheet asks for, and the row
+     * gap never gets thinner than FLOW_ROW_SPACING.
+     */
+    _updateFlowSpacing() {
+        const columnSpacing = this._list.get_theme_node().get_length('spacing') || FALLBACK_COLUMN_SPACING;
+        const rowSpacing = Math.max(columnSpacing, FLOW_ROW_SPACING);
+
+        const layout = this._flowContainer.get_layout_manager();
+        if (layout.column_spacing === columnSpacing && layout.row_spacing === rowSpacing)
+            return;
+
+        layout.column_spacing = columnSpacing;
+        layout.row_spacing = rowSpacing;
+    }
+
+    /**
      * Width of the area the items are reflowed into, i.e. the width requested
      * by the caller minus this widget's own border and padding.
      *
@@ -287,6 +319,10 @@ export const SwitcherList = GObject.registerClass({
         // space that is really available. The height therefore depends on how
         // many rows the layout produces for that width: one row stays small, the
         // rows that follow make the popup grow vertically.
+        // The style is computed by now, so the theme's spacing can be applied
+        // before the rows are measured for the available width.
+        this._updateFlowSpacing();
+
         const contentWidth = this._getContentWidth(forWidth);
         if (contentWidth > 0)
             this._maxContentWidth = contentWidth;
@@ -294,6 +330,7 @@ export const SwitcherList = GObject.registerClass({
         // FlowLayout returns the height of the tallest row as its minimum and
         // the height of all rows as its natural height.
         const [rowsMin, rowsNat] = this._flowContainer.get_preferred_height(contentWidth);
+        console.log(`[AATWS-DBG] height forWidth=${forWidth} content=${contentWidth} rows=[${rowsMin},${rowsNat}]`);
 
         const themeNode = this.get_theme_node();
         let [minHeight, natHeight] = themeNode.adjust_preferred_height(rowsMin, rowsNat);
@@ -320,6 +357,7 @@ export const SwitcherList = GObject.registerClass({
         if (this._maxContentWidth > 0)
             contentWidth = Math.min(contentWidth, this._maxContentWidth);
         contentWidth = Math.max(contentWidth, minLineWidth);
+        console.log(`[AATWS-DBG] width forHeight=${forHeight} minLine=${minLineWidth} oneLine=${oneLineWidth} max=${this._maxContentWidth} -> ${contentWidth}`);
 
         return this.get_theme_node().adjust_preferred_width(minLineWidth, contentWidth);
     }
@@ -385,6 +423,10 @@ export const SwitcherList = GObject.registerClass({
         }
 
         this._highlighted = index;
+
+        const dbgItem = this._items[index];
+        if (dbgItem)
+            console.log(`[AATWS-DBG] highlight idx=${index} cls="${dbgItem.style_class_name}" pseudo="${dbgItem.style_pseudo_class}" box=${dbgItem.width}x${dbgItem.height}@${dbgItem.x},${dbgItem.y} parent=${dbgItem.get_parent()?.get_name?.() || dbgItem.get_parent()?.constructor?.name}`);
 
         // No horizontal scrolling: the items are wrapped into the popup width,
         // so the highlighted item is always visible already.

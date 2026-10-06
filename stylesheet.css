@@ -122,7 +122,13 @@
 
 .window-close-aatws {
   color: white;
+  background-color: dimgrey;
+  width: 18px;
+  height: 18px;
+  padding: 2px;
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
   border: 0px;
+  border-radius: 35px;
 }
 
 .window-close-hover {
@@ -160,7 +166,7 @@
 
 /* space between switcher items */
 .switcher-list-item-container {
-  spacing: 10px;
+  spacing: 1px;
 }
 
 .switcher-list, .switcher-list-dark, .switcher-list-light, .switcher-list-all, .switcher-list-workspace, .switcher-list-monitor {
@@ -190,6 +196,14 @@
 .item-box {
   transition-duration: 0ms;
 }
+
+/* Card radius: a bit softer than the theme default (Fluent uses 5px), but
+   without exaggerating. Same selector as the theme so the extension wins the
+   cascade - the card, its :selected/:outlined background and the transparent
+   .item-box-custom background all share this radius. */
+.switcher-list .item-box {
+  border-radius: 10px;
+}
 .item-box-custom {
   background-color: transparent;
 }
@@ -208,19 +222,4 @@
 
 .focused-light {
   background-color: rgba(210, 210, 210, 0.5);
-}
-
-/* Windows 11 style card header */
-.card-header {
-  spacing: 8px;
-  padding: 8px 12px;
-}
-
-.card-header-title {
-  font-size: 0.85em;
-}
-
-.thumbnail-box {
-  border-radius: 12px;
-  padding: 0 4px 4px 4px;
 }
