@@ -335,20 +335,35 @@ export const SwitcherList = GObject.registerClass({
         const spacing = this._flowContainer.get_layout_manager().column_spacing || 0;
         let x = 0;
         let widest = 0;
+        let sum = 0;
+        let count = 0;
+        let wrapped = false;
 
         for (const child of this._flowContainer.get_children()) {
             if (!child.visible)
                 continue;
 
             const [, naturalWidth] = child.get_preferred_width(-1);
+            count++;
+            sum += naturalWidth;
             if (x + naturalWidth > wrapWidth) {
+                wrapped = true;
                 widest = Math.max(widest, x - spacing);
                 x = 0;
             }
             x += naturalWidth + spacing;
         }
 
-        return Math.max(0, widest, x - spacing);
+        const result = Math.max(0, widest, x - spacing);
+        // [AATWS-DBG] temporary - `sum`/`oneLine` is the single line the base
+        // class reports while `result` is what the panel really allocates; the
+        // journal showed 1410 vs 1339 and the height probe reported a single
+        // row, so the three measurements have to be compared in one place.
+        console.error(
+            `[AATWS-DBG] wrapWidth=${wrapWidth} n=${count} spacing=${spacing}` +
+            ` sum=${sum} oneLine=${sum + spacing * Math.max(0, count - 1)}` +
+            ` widest=${result} wrapped=${wrapped}`);
+        return result;
     }
 
     vfunc_get_preferred_height(forWidth) {

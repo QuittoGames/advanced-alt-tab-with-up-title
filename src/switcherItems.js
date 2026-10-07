@@ -107,6 +107,40 @@ export const WindowIcon = GObject.registerClass({
         this._closeButton = closeButton;
         this._closeButton.opacity = 0;
         this._icon.add_child(this._closeButton);
+
+        // [AATWS-DBG] temporary - reports where the button actually lands once
+        // the stage has allocated it. The reported "X in the middle of the
+        // screen" cannot be reproduced without a screenshot, so the numbers
+        // (button, icon box, card, real parent and alignment flags) identify
+        // which actor mispositioned it.
+        let dbgQueued = false;
+        const dbgReport = () => {
+            if (dbgQueued)
+                return;
+            dbgQueued = true;
+            Meta.later_add(Meta.LaterType.BEFORE_REDRAW, () => {
+                dbgQueued = false;
+                const btn = this._closeButton;
+                if (!btn || !btn.visible || btn.opacity === 0)
+                    return false;
+
+                const card = this.get_parent();
+                const [bx, by] = btn.get_transformed_position();
+                const [ix, iy] = this._icon.get_transformed_position();
+                const [cx, cy] = card ? card.get_transformed_position() : [0, 0];
+                const parent = btn.get_parent();
+                console.error(
+                    `[AATWS-DBG] closeBtn ${btn.width}x${btn.height}@${bx},${by}` +
+                    ` | icon ${this._icon.width}x${this._icon.height}@${ix},${iy}` +
+                    ` | card ${card?.width ?? '?'}x${card?.height ?? '?'}@${cx},${cy}` +
+                    ` | parent=${parent === this._icon ? '_icon' : parent?.constructor?.name ?? 'none'}` +
+                    ` align=${btn.x_align},${btn.y_align} expand=${btn.x_expand},${btn.y_expand}` +
+                    ` opacity=${btn.opacity}`);
+                return false;
+            });
+        };
+        closeButton.connect('notify::allocation', dbgReport);
+        closeButton.connect('notify::opacity', dbgReport);
     }
 
     _createWindowIcon(window) {
