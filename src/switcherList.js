@@ -96,6 +96,7 @@ export const SwitcherList = GObject.registerClass({
         this._scrollableLeft = false;
         this._scrollableRight = false;
         this._maxContentWidth = 0;
+        this._contentWidth = 0;
 
         this._opt = opt;
         this._switcherParams = this._getSwitcherParams(opt, wsp);
@@ -314,6 +315,42 @@ export const SwitcherList = GObject.registerClass({
         return contentBox.x2 - contentBox.x1;
     }
 
+    /**
+     * Width of the widest row produced by reflowing the items into `wrapWidth`.
+     *
+     * Clutter.FlowLayout never reports a wrapped width: for a horizontal flow
+     * get_preferred_width() is not given an available width, so it always
+     * returns the single line total as its natural width. The panel therefore
+     * has to replay the same packing rule Clutter uses in allocate()
+     * (`item_x + child_natural > avail_width` starts a new row) to know how
+     * wide it really has to be.
+     *
+     * @param {number} wrapWidth - width the items are reflowed into
+     * @returns {number} width of the widest row, 0 when there is nothing to pack
+     */
+    _getWidestRowWidth(wrapWidth) {
+        if (!(wrapWidth > 0))
+            return 0;
+
+        const spacing = this._flowContainer.get_layout_manager().column_spacing || 0;
+        let x = 0;
+        let widest = 0;
+
+        for (const child of this._flowContainer.get_children()) {
+            if (!child.visible)
+                continue;
+
+            const [, naturalWidth] = child.get_preferred_width(-1);
+            if (x + naturalWidth > wrapWidth) {
+                widest = Math.max(widest, x - spacing);
+                x = 0;
+            }
+            x += naturalWidth + spacing;
+        }
+
+        return Math.max(0, widest, x - spacing);
+    }
+
     vfunc_get_preferred_height(forWidth) {
         // The popup passes the monitor width, so the items are reflowed for the
         // space that is really available. The height therefore depends on how
@@ -323,14 +360,26 @@ export const SwitcherList = GObject.registerClass({
         // before the rows are measured for the available width.
         this._updateFlowSpacing();
 
-        const contentWidth = this._getContentWidth(forWidth);
+        const availableWidth = this._getContentWidth(forWidth);
+        if (availableWidth > 0)
+            this._maxContentWidth = availableWidth;
+
+        // The items only wrap up to the available width, but the panel itself
+        // must end where the widest row ends - otherwise a wrapped list would
+        // stretch the popup across the whole monitor.
+        let contentWidth = this._maxContentWidth;
         if (contentWidth > 0)
-            this._maxContentWidth = contentWidth;
+            contentWidth = this._getWidestRowWidth(contentWidth) || contentWidth;
+        this._contentWidth = contentWidth;
 
         // FlowLayout returns the height of the tallest row as its minimum and
-        // the height of all rows as its natural height.
+        // the height of all rows as its natural height. The width measured here
+        // and the width the popup allocates later are the same value, so
+        // Clutter keeps the row count it was measured with: if they diverge,
+        // allocate() rewraps and the rows no longer fit the height reported
+        // here.
         const [rowsMin, rowsNat] = this._flowContainer.get_preferred_height(contentWidth);
-        console.log(`[AATWS-DBG] height forWidth=${forWidth} content=${contentWidth} rows=[${rowsMin},${rowsNat}]`);
+        console.error(`[AATWS-DBG] height forWidth=${forWidth} avail=${availableWidth} content=${contentWidth} rows=[${rowsMin},${rowsNat}]`);
 
         const themeNode = this.get_theme_node();
         let [minHeight, natHeight] = themeNode.adjust_preferred_height(rowsMin, rowsNat);
@@ -354,10 +403,11 @@ export const SwitcherList = GObject.registerClass({
         // the rows have not been measured for an available width yet, fall back
         // to the single line width, which is what the base class reports.
         let contentWidth = oneLineWidth;
-        if (this._maxContentWidth > 0)
-            contentWidth = Math.min(contentWidth, this._maxContentWidth);
+        const panelWidth = this._contentWidth > 0 ? this._contentWidth : this._maxContentWidth;
+        if (panelWidth > 0)
+            contentWidth = Math.min(contentWidth, panelWidth);
         contentWidth = Math.max(contentWidth, minLineWidth);
-        console.log(`[AATWS-DBG] width forHeight=${forHeight} minLine=${minLineWidth} oneLine=${oneLineWidth} max=${this._maxContentWidth} -> ${contentWidth}`);
+        console.error(`[AATWS-DBG] width forHeight=${forHeight} minLine=${minLineWidth} oneLine=${oneLineWidth} avail=${this._maxContentWidth} content=${this._contentWidth} -> ${contentWidth}`);
 
         return this.get_theme_node().adjust_preferred_width(minLineWidth, contentWidth);
     }
@@ -408,12 +458,17 @@ export const SwitcherList = GObject.registerClass({
     }
 
     highlight(index) {
+        const prevIcon = this.icons[this._highlighted];
+        if (prevIcon?._closeButton)
+            prevIcon._closeButton.opacity = 0;
+
         if (this._items[this._highlighted]) {
             this._items[this._highlighted].remove_style_pseudo_class('selected');
             if (this._opt.colorStyle.STYLE)
                 this._items[this._highlighted].remove_style_class_name(this._opt.colorStyle.SELECTED);
         }
 
+        const icon = this.icons[index];
         if (this._items[index]) {
             this._items[index].add_style_pseudo_class('selected');
             if (this._opt.colorStyle.STYLE) {
@@ -424,9 +479,35 @@ export const SwitcherList = GObject.registerClass({
 
         this._highlighted = index;
 
+        // Close button follows the highlighted card for keyboard navigation too.
+        // _updateMouseControls() only runs while the pointer drives the switcher,
+        // so without this branch the button never appears on a plain Alt+Tab.
+        if (icon?.window) {
+            if (!icon._closeButton) {
+                icon._createCloseButton(icon.window);
+                icon._closeButton.connect('enter-event', () => {
+                    icon._closeButton.add_style_class_name('window-close-hover');
+                });
+                icon._closeButton.connect('leave-event', () => {
+                    icon._closeButton.remove_style_class_name('window-close-hover');
+                });
+            }
+            icon._closeButton.opacity = 255;
+        }
+
         const dbgItem = this._items[index];
-        if (dbgItem)
-            console.log(`[AATWS-DBG] highlight idx=${index} cls="${dbgItem.style_class_name}" pseudo="${dbgItem.style_pseudo_class}" box=${dbgItem.width}x${dbgItem.height}@${dbgItem.x},${dbgItem.y} parent=${dbgItem.get_parent()?.get_name?.() || dbgItem.get_parent()?.constructor?.name}`);
+        if (dbgItem) {
+            const dbgNode = dbgItem.get_theme_node();
+            const dbgBg = dbgNode.get_background_color();
+            // pad=8 => Fluent's ".switcher-list .item-box { padding: 8px }" matches
+            // (item really carries `item-box` under `.switcher-list`); rad=10 => this
+            // extension's stylesheet is loaded, rad=5 => only the theme's rule matched.
+            let dbgPad = -1;
+            let dbgRad = -1;
+            try { dbgPad = dbgNode.get_length('padding-top'); } catch (e) { dbgPad = -2; }
+            try { dbgRad = dbgNode.get_length('border-radius'); } catch (e) { dbgRad = -2; }
+            logError(new Error(`[AATWS-DBG] highlight idx=${index} cls="${dbgItem.style_class}" box=${dbgItem.width}x${dbgItem.height}@${dbgItem.x},${dbgItem.y} parent=${dbgItem.get_parent()?.get_name?.() || dbgItem.get_parent()?.constructor?.name} bg=rgba(${dbgBg.red},${dbgBg.green},${dbgBg.blue},${(dbgBg.alpha / 255).toFixed(2)}) pad=${dbgPad} rad=${dbgRad}`));
+        }
 
         // No horizontal scrolling: the items are wrapped into the popup width,
         // so the highlighted item is always visible already.

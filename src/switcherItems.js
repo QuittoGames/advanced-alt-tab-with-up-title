@@ -89,10 +89,11 @@ export const WindowIcon = GObject.registerClass({
         const closeButton = new St.Icon({
             style_class: 'window-close-aatws',
             icon_name: 'window-close-symbolic',
+            // _icon uses a BinLayout: expanding here would stretch the button
+            // over the whole card and make x_align/y_align meaningless, so keep
+            // it at its natural size (18x18 from CSS) pinned to the top-right.
             x_align: Clutter.ActorAlign.END,
             y_align: Clutter.ActorAlign.START,
-            x_expand: true,
-            y_expand: true,
             reactive: true,
         });
         closeButton.connect('button-press-event', () => {

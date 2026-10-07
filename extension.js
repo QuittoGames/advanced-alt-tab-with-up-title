@@ -44,6 +44,9 @@ export default class AATWS extends Extension {
     }
 
     enable() {
+        logError(new Error('[AATWS-DBG] canal logError OK'));
+        log('[AATWS-DBG] canal log OK');
+        console.log('[AATWS-DBG] canal console.log OK');
         const Me = {
             metadata: this.metadata,
             gSettings: this.getSettings(),
